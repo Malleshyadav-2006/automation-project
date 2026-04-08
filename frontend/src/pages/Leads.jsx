@@ -7,7 +7,7 @@ export default function Leads() {
 
   const fetchLeads = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/leads');
+      const res = await axios.get('https://automation-project-h136.onrender.com/api/leads');
       setLeads(res.data);
     } catch(err) {
       console.error(err);
@@ -27,7 +27,7 @@ export default function Leads() {
     formData.append('file', file);
     
     try {
-      await axios.post('http://localhost:5000/api/leads/upload', formData, {
+      await axios.post('https://automation-project-h136.onrender.com/api/leads/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       fetchLeads();
