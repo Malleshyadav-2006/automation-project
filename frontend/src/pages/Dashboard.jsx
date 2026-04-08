@@ -22,7 +22,9 @@ export default function Dashboard() {
       const res = await axios.post('https://automation-project-1-ia1w.onrender.com/api/settings', { isRunning: !isRunning });
       setIsRunning(res.data.isRunning);
     } catch (e) {
-      alert("Failed to toggle engine");
+      const errorMsg = e.response ? `Server Error: ${e.response.status}` : e.message;
+      alert(`Failed to toggle engine. Check console for details.\nReason: ${errorMsg}`);
+      console.error("Toggle engine failed:", e);
     }
   };
 
