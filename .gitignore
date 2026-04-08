@@ -1,0 +1,20 @@
+# Dependency directories
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Build directories
+frontend/dist/
+backend/uploads/
+
+# Environment configs (DO NOT LEAK THESE TO GITHUB)
+.env
+.env.local
+backend/.env
+frontend/.env
+
+# Local settings
+backend/settings.json
