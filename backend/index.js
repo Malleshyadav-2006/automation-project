@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
-import csv from 'csv-parser';
+import * as xlsx from 'xlsx';
 import fs from 'fs';
 import path from 'path';
 import { OpenAI } from 'openai';
@@ -35,33 +35,41 @@ app.post('/api/leads', async (req, res) => {
   res.json(data[0]);
 });
 
-// CSV Upload — supports columns: Name, Email, Company, Role/Title, LinkedIn_URL, Website, Notes
-app.post('/api/leads/upload', upload.single('file'), (req, res) => {
+// File Upload — supports CSV and Excel (.xlsx). Columns: Name, Email, Company, Role/Title, LinkedIn_URL, Website, Notes
+app.post('/api/leads/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const results = [];
 
-  fs.createReadStream(req.file.path)
-    .pipe(csv())
-    .on('data', (row) => {
-      results.push({
-        name:         row.Name         || row.name         || '',
-        company:      row.Company      || row.company      || '',
-        email:        row.Email        || row.email        || null,
-        role:         row.Role         || row.role         || row.Title || row.title || '',
-        website:      row.Website      || row.website      || '',
-        linkedin_url: row.LinkedIn_URL || row.linkedin_url || row.LinkedIn || row.linkedin || '',
-        notes:        row.Notes        || row.notes        || '',
-        status:       'Pending',
-      });
-    })
-    .on('end', async () => {
-      fs.unlinkSync(req.file.path);
-      const validLeads = results.filter(l => l.email);
-      if (validLeads.length === 0) return res.status(400).json({ error: 'No valid emails found in CSV' });
-      const { data, error } = await supabase.from('leads').insert(validLeads).select();
-      if (error) return res.status(500).json({ error: error.message });
-      res.json({ message: `Successfully imported ${validLeads.length} leads`, data });
-    });
+  try {
+    const workbook = xlsx.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = xlsx.utils.sheet_to_json(sheet);
+    
+    fs.unlinkSync(req.file.path);
+
+    const results = rows.map(row => ({
+      name:         row.Name         || row.name         || '',
+      company:      row.Company      || row.company      || '',
+      email:        row.Email        || row.email        || null,
+      role:         row.Role         || row.role         || row.Title || row.title || '',
+      website:      row.Website      || row.website      || '',
+      linkedin_url: row.LinkedIn_URL || row.linkedin_url || row.LinkedIn || row.linkedin || '',
+      notes:        row.Notes        || row.notes        || '',
+      status:       'Pending',
+    }));
+
+    const validLeads = results.filter(l => l.email);
+    if (validLeads.length === 0) return res.status(400).json({ error: 'No valid emails found in file' });
+    
+    const { data, error } = await supabase.from('leads').insert(validLeads).select();
+    if (error) throw new Error(error.message);
+    
+    res.json({ message: `Successfully imported ${validLeads.length} leads`, data });
+  } catch (err) {
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    console.error(err);
+    res.status(500).json({ error: 'Failed to process file: ' + err.message });
+  }
 });
 
 // ─── SENDERS API ─────────────────────────────────────────────────────────────

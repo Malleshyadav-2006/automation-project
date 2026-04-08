@@ -44,8 +44,8 @@ export default function Leads() {
         <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Leads</h1>
         <div className="space-x-3 flex items-center">
           <label className="cursor-pointer px-4 py-2 bg-white border border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-50 transition-colors shadow-sm inline-block">
-            Import CSV
-            <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+            Import Excel / CSV
+            <input type="file" accept=".csv, .xlsx, .xls" className="hidden" onChange={handleFileUpload} />
           </label>
         </div>
       </div>
