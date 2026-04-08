@@ -7,19 +7,19 @@ export default function Dashboard() {
 
   useEffect(() => {
     // Fetch stats
-    axios.get('https://automation-project-h136.onrender.com/api/stats')
+    axios.get('https://automation-project-1-ia1w.onrender.com/api/stats')
       .then(res => setStats(res.data))
       .catch(err => console.error("Error fetching stats:", err));
 
     // Fetch engine state
-    axios.get('https://automation-project-h136.onrender.com/api/settings')
+    axios.get('https://automation-project-1-ia1w.onrender.com/api/settings')
       .then(res => setIsRunning(res.data.isRunning))
       .catch(console.error);
   }, []);
 
   const toggleEngine = async () => {
     try {
-      const res = await axios.post('https://automation-project-h136.onrender.com/api/settings', { isRunning: !isRunning });
+      const res = await axios.post('https://automation-project-1-ia1w.onrender.com/api/settings', { isRunning: !isRunning });
       setIsRunning(res.data.isRunning);
     } catch (e) {
       alert("Failed to toggle engine");
