@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
 import { UserPlus, Plus, Trash2, Upload, X } from 'lucide-react'
+import { API_BASE } from '../config'
 
-const API = 'https://automation-project-1-ia1w.onrender.com/api'
+const API = API_BASE
 
 const emptyRow = () => ({ name: '', company: '', email: '', notes: '' })
 

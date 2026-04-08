@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Mail, Plus, Trash2, ShieldCheck, MailWarning } from 'lucide-react';
-
-const API_BASE = 'https://automation-project-1-ia1w.onrender.com/api';
+import { API_BASE } from '../config';
 
 function Senders() {
   const [senders, setSenders] = useState([]);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
+import { API_BASE } from '../config'
 
 export default function Dashboard() {
   const [stats, setStats] = useState({ totalLeads: 0, sent: 0, replied: 0, bounced: 0 });
@@ -7,19 +8,19 @@ export default function Dashboard() {
 
   useEffect(() => {
     // Fetch stats
-    axios.get('https://automation-project-1-ia1w.onrender.com/api/stats')
+    axios.get(`${API_BASE}/stats`)
       .then(res => setStats(res.data))
       .catch(err => console.error("Error fetching stats:", err));
 
     // Fetch engine state
-    axios.get('https://automation-project-1-ia1w.onrender.com/api/settings')
+    axios.get(`${API_BASE}/settings`)
       .then(res => setIsRunning(res.data.isRunning))
       .catch(console.error);
   }, []);
 
   const toggleEngine = async () => {
     try {
-      const res = await axios.post('https://automation-project-1-ia1w.onrender.com/api/settings', { isRunning: !isRunning });
+      const res = await axios.post(`${API_BASE}/settings`, { isRunning: !isRunning });
       setIsRunning(res.data.isRunning);
     } catch (e) {
       const errorMsg = e.response ? `Server Error: ${e.response.status}` : e.message;
