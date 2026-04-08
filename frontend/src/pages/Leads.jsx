@@ -1,22 +1,25 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
-import { UserPlus, X } from 'lucide-react'
+import { UserPlus, Plus, Trash2, Upload, X } from 'lucide-react'
 
 const API = 'https://automation-project-1-ia1w.onrender.com/api'
+
+const emptyRow = () => ({ name: '', company: '', email: '', notes: '' })
 
 export default function Leads() {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [rows, setRows] = useState(Array.from({ length: 5 }, emptyRow));
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ name: '', company: '', notes: '', email: '' });
   const [error, setError] = useState('');
+  const [successCount, setSuccessCount] = useState(null);
 
   const fetchLeads = async () => {
     try {
       const res = await axios.get(`${API}/leads`);
       setLeads(res.data);
-    } catch(err) {
+    } catch (err) {
       console.error(err);
     }
     setLoading(false);
@@ -24,29 +27,66 @@ export default function Leads() {
 
   useEffect(() => { fetchLeads(); }, []);
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+  const handleChange = (index, field, value) => {
+    setRows(prev => prev.map((row, i) => i === index ? { ...row, [field]: value } : row));
     setError('');
+    setSuccessCount(null);
+  };
+
+  const addRow = () => setRows(prev => [...prev, emptyRow()]);
+
+  const removeRow = (index) => {
+    if (rows.length === 1) return;
+    setRows(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.email) { setError('Email is required.'); return; }
+    const valid = rows.filter(r => r.email.trim());
+    if (valid.length === 0) { setError('Add at least one lead with an email address.'); return; }
+
     setSubmitting(true);
+    setError('');
+    setSuccessCount(null);
+
     try {
-      await axios.post(`${API}/leads`, {
-        name: form.name,
-        company: form.company,
-        notes: form.notes,
-        email: form.email,
-        status: 'Pending',
-      });
-      setForm({ name: '', company: '', notes: '', email: '' });
-      setShowForm(false);
+      const payload = valid.map(r => ({
+        name:    r.name.trim(),
+        company: r.company.trim(),
+        email:   r.email.trim(),
+        notes:   r.notes.trim(),
+        status:  'Pending',
+      }));
+
+      // Use bulk insert endpoint if exists, fallback to sequential
+      await axios.post(`${API}/leads/bulk`, payload);
+
+      setSuccessCount(payload.length);
+      setRows(Array.from({ length: 5 }, emptyRow));
       await fetchLeads();
-    } catch(err) {
-      setError(err.response?.data?.error || 'Failed to add lead. Please try again.');
-      console.error(err);
+    } catch (err) {
+      // Fallback: insert one-by-one if /bulk doesn't exist
+      if (err.response?.status === 404) {
+        try {
+          const payload = valid.map(r => ({
+            name:    r.name.trim(),
+            company: r.company.trim(),
+            email:   r.email.trim(),
+            notes:   r.notes.trim(),
+            status:  'Pending',
+          }));
+          await Promise.all(payload.map(lead => axios.post(`${API}/leads`, lead)));
+          setSuccessCount(payload.length);
+          setRows(Array.from({ length: 5 }, emptyRow));
+          await fetchLeads();
+        } catch (e2) {
+          setError(e2.response?.data?.error || 'Failed to add leads. Check console.');
+          console.error(e2);
+        }
+      } else {
+        setError(err.response?.data?.error || 'Failed to add leads. Check console.');
+        console.error(err);
+      }
     }
     setSubmitting(false);
   };
@@ -57,76 +97,98 @@ export default function Leads() {
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Leads</h1>
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => { setShowForm(!showForm); setError(''); setSuccessCount(null); }}
           className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors shadow-sm"
         >
           {showForm ? <X className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
-          {showForm ? 'Cancel' : 'Add Lead'}
+          {showForm ? 'Close' : 'Add Leads'}
         </button>
       </div>
 
-      {/* Manual Entry Form */}
+      {/* Bulk Entry Form */}
       {showForm && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8">
-          <h2 className="text-lg font-bold text-slate-800 mb-5">Add New Lead</h2>
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-slate-600">Full Name</label>
-              <input
-                type="text"
-                name="name"
-                value={form.name}
-                onChange={handleChange}
-                placeholder="John Doe"
-                className="px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              />
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">Bulk Lead Entry</h2>
+              <p className="text-sm text-slate-500 mt-0.5">Fill in as many rows as you need. Rows without an email will be skipped.</p>
+            </div>
+            <button
+              type="button"
+              onClick={addRow}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              <Plus className="w-4 h-4" /> Add Row
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit}>
+            {/* Column headers */}
+            <div className="grid grid-cols-[1fr_1fr_1.2fr_1.6fr_auto] gap-2 mb-2 px-1">
+              {['Name', 'Company', 'Email *', 'Overview / Notes', ''].map(h => (
+                <span key={h} className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</span>
+              ))}
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-slate-600">Company Name</label>
-              <input
-                type="text"
-                name="company"
-                value={form.company}
-                onChange={handleChange}
-                placeholder="Acme Corp"
-                className="px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              />
+            {/* Rows */}
+            <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+              {rows.map((row, i) => (
+                <div key={i} className="grid grid-cols-[1fr_1fr_1.2fr_1.6fr_auto] gap-2 items-center">
+                  <input
+                    type="text"
+                    placeholder="John Doe"
+                    value={row.name}
+                    onChange={e => handleChange(i, 'name', e.target.value)}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Acme Corp"
+                    value={row.company}
+                    onChange={e => handleChange(i, 'company', e.target.value)}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  <input
+                    type="email"
+                    placeholder="john@acme.com"
+                    value={row.email}
+                    onChange={e => handleChange(i, 'email', e.target.value)}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Paste overview, role, context…"
+                    value={row.notes}
+                    onChange={e => handleChange(i, 'notes', e.target.value)}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeRow(i)}
+                    disabled={rows.length === 1}
+                    className="p-2 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-30"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-slate-600">Email Address <span className="text-red-500">*</span></label>
-              <input
-                type="email"
-                name="email"
-                value={form.email}
-                onChange={handleChange}
-                placeholder="john@acmecorp.com"
-                required
-                className="px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5 md:row-span-2">
-              <label className="text-sm font-medium text-slate-600">Overview / Notes</label>
-              <textarea
-                name="notes"
-                value={form.notes}
-                onChange={handleChange}
-                placeholder="Brief overview about this lead — their role, company context, why they'd be a good fit…"
-                rows={5}
-                className="px-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
-              />
-            </div>
-
-            <div className="flex items-end gap-3 md:col-start-1">
-              {error && <p className="text-red-500 text-sm">{error}</p>}
+            {/* Footer */}
+            <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
+              <div className="flex items-center gap-4">
+                {error && <p className="text-red-500 text-sm">{error}</p>}
+                {successCount !== null && (
+                  <p className="text-emerald-600 text-sm font-medium">✓ {successCount} lead{successCount !== 1 ? 's' : ''} added successfully!</p>
+                )}
+              </div>
               <button
                 type="submit"
                 disabled={submitting}
-                className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-5 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {submitting ? 'Adding...' : 'Add Lead'}
+                <Upload className="w-4 h-4" />
+                {submitting ? 'Saving...' : `Save ${rows.filter(r => r.email.trim()).length || ''} Leads`}
               </button>
             </div>
           </form>
@@ -141,6 +203,7 @@ export default function Leads() {
             placeholder="Search leads..."
             className="px-4 py-2 border border-slate-300 rounded-lg w-64 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 border-opacity-50"
           />
+          <span className="text-sm text-slate-500 self-center">{leads.length} total</span>
         </div>
         <table className="w-full text-left border-collapse">
           <thead>
@@ -174,7 +237,7 @@ export default function Leads() {
               </tr>
             ))}
             {leads.length === 0 && !loading && (
-              <tr><td colSpan="5" className="p-8 text-center text-slate-500">No leads yet. Click "Add Lead" to get started.</td></tr>
+              <tr><td colSpan="5" className="p-8 text-center text-slate-500">No leads yet. Click "Add Leads" to get started.</td></tr>
             )}
           </tbody>
         </table>

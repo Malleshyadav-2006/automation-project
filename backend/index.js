@@ -39,6 +39,21 @@ app.post('/api/leads', async (req, res) => {
   res.json(data[0]);
 });
 
+// Bulk insert — accepts an array of lead objects
+app.post('/api/leads/bulk', async (req, res) => {
+  const leads = req.body;
+  if (!Array.isArray(leads) || leads.length === 0)
+    return res.status(400).json({ error: 'Expected a non-empty array of leads' });
+
+  const valid = leads.filter(l => l.email && l.email.trim());
+  if (valid.length === 0)
+    return res.status(400).json({ error: 'No valid email addresses found in the submitted leads' });
+
+  const { data, error } = await supabase.from('leads').insert(valid).select();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ message: `Successfully added ${data.length} leads`, data });
+});
+
 // File Upload — supports CSV and Excel (.xlsx). Columns: Name, Email, Company, Role/Title, LinkedIn_URL, Website, Notes
 app.post('/api/leads/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
