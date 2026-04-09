@@ -255,10 +255,10 @@ const getSystemState = () => {
 
 // ─── CRON JOBS ───────────────────────────────────────────────────────────────
 
-// Every 20 minutes: pick the next Pending lead, generate AI email, send with resume
-cron.schedule('*/20 * * * *', () => {
+// Every 10 minutes: pick the next Pending lead, generate AI email, send with resume
+cron.schedule('*/10 * * * *', () => {
   if (!getSystemState()) return console.log('⏸️ [CRON] Engine paused. Skipping outreach cycle.');
-  console.log('\n🕐 [20-min CRON] Triggering outreach cycle...');
+  console.log('\n🕐 [10-min CRON] Triggering outreach cycle...');
   runOutreachCycle();
 });
 
@@ -278,7 +278,7 @@ cron.schedule('0 0 * * *', async () => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`\n🚀 Backend running on port ${PORT}`);
-  console.log(`📧 Outreach cron: every 20 minutes`);
+  console.log(`📧 Outreach cron: every 10 minutes`);
   console.log(`🔍 Reply detector: every 15 minutes`);
   startKeepAlive();
   console.log('');
