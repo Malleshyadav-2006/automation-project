@@ -1,0 +1,65 @@
+# ──────────────────────────────────────────────────────────
+#  Render Blueprint — Outreach Autopilot
+#  Backend: Node.js Web Service (free tier)
+#  Frontend: Static Site (free tier)
+# ──────────────────────────────────────────────────────────
+services:
+  # ─── BACKEND (Node.js) ─────────────────────────────
+  - type: web
+    name: outreach-autopilot-api
+    runtime: node
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "5000"
+      - key: SUPABASE_URL
+        sync: false          # set manually in Render dashboard
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: IMAP_HOST
+        value: imap.gmail.com
+      - key: IMAP_PORT
+        value: "993"
+      - key: IMAP_USER
+        sync: false
+      - key: IMAP_PASS
+        sync: false
+      - key: SENDER_NAME
+        sync: false
+      - key: SENDER_ROLE
+        sync: false
+      - key: RESUME_FILENAME
+        value: TimothyScherrResume.pdf
+
+  # ─── FRONTEND (Static Site) ────────────────────────
+  - type: web
+    name: outreach-autopilot-ui
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=0, must-revalidate
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

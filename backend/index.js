@@ -17,6 +17,30 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ─── HEALTH CHECK & KEEP-ALIVE ──────────────────────────────────────────────
+app.get('/ping', (req, res) => res.status(200).json({ status: 'ok', uptime: process.uptime() }));
+app.get('/healthz', (req, res) => res.status(200).send('OK'));
+
+// Self-ping to prevent Render free tier spin-down (every 14 minutes)
+const SELF_PING_INTERVAL = 14 * 60 * 1000; // 14 minutes
+const startKeepAlive = () => {
+  const RENDER_URL = process.env.RENDER_EXTERNAL_URL; // auto-set by Render
+  if (!RENDER_URL) {
+    console.log('⚠️  RENDER_EXTERNAL_URL not set — self-ping disabled (local dev mode).');
+    return;
+  }
+  setInterval(async () => {
+    try {
+      const res = await fetch(`${RENDER_URL}/ping`);
+      const data = await res.json();
+      console.log(`🏓 Keep-alive ping OK — uptime: ${Math.round(data.uptime)}s`);
+    } catch (err) {
+      console.error('🏓 Keep-alive ping failed:', err.message);
+    }
+  }, SELF_PING_INTERVAL);
+  console.log(`🏓 Self-ping keep-alive active (every 14 min) → ${RENDER_URL}/ping`);
+};
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const uploadDir = path.resolve('uploads');
@@ -255,5 +279,7 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`\n🚀 Backend running on port ${PORT}`);
   console.log(`📧 Outreach cron: every 20 minutes`);
-  console.log(`🔍 Reply detector: every 15 minutes\n`);
+  console.log(`🔍 Reply detector: every 15 minutes`);
+  startKeepAlive();
+  console.log('');
 });
