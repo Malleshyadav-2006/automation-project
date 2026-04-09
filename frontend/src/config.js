@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────
 //  BACKEND URL — auto-detects local dev vs production.
-//  Update PROD_URL after deploying to a new Render instance.
+//  Dynamically uses hostname for local area network access.
 // ─────────────────────────────────────────────────────────
 const PROD_URL = 'https://automation-project-1xzx.onrender.com/api';
-const LOCAL_URL = 'http://localhost:5000/api';
+const LOCAL_URL = `http://${window.location.hostname}:5000/api`;
 
-const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-export const API_BASE = isLocal ? LOCAL_URL : PROD_URL;
+// If we are on the Render domain, use PROD, otherwise we use local (localhost or LAN IP)
+export const API_BASE = window.location.hostname.includes('onrender.com') ? PROD_URL : LOCAL_URL;
