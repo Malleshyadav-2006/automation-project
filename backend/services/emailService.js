@@ -179,7 +179,15 @@ export const runOutreachCycle = async () => {
 
     } catch (err) {
       console.error(`❌ Failed sender ${sender.email} -> lead ${lead.email}:`, err.message);
-      await supabase.from('leads').update({ status: 'Bounced' }).eq('id', lead.id);
+      
+      // Preserve existing notes and append the error reason
+      const bounceNote = `[BOUNCED] ${err.message}`;
+      const newNotes = lead.notes ? `${lead.notes} | ${bounceNote}` : bounceNote;
+      
+      await supabase.from('leads').update({ 
+        status: 'Bounced',
+        notes: newNotes
+      }).eq('id', lead.id);
     }
   }));
 };
