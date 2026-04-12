@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { OpenAI } from 'openai';
 import cron from 'node-cron';
-import { runOutreachCycle } from './services/emailService.js';
+import { runOutreachCycle, runFollowUpCycle, generateColdEmail } from './services/emailService.js';
 import { checkReplies } from './services/imapService.js';
 
 dotenv.config();
@@ -150,19 +150,7 @@ app.post('/api/emails/generate', async (req, res) => {
     const senderName = process.env.SENDER_NAME || 'Job Seeker';
     const senderRole = process.env.SENDER_ROLE || 'Software Developer';
 
-    const prompt = `You are helping ${senderName}, a ${senderRole}, write a genuine, warm cold email.
-Prospect: ${lead.name || 'there'}, ${lead.role || 'Manager'} at ${lead.company || 'your company'}.
-LinkedIn: ${lead.linkedin_url || 'N/A'}.
-Write a friendly 100-word job outreach email. Mention resume is attached.
-Return JSON: {"subject": "...", "body": "..."}`;
-
-    const completion = await openai.chat.completions.create({
-      messages: [{ role: 'user', content: prompt }],
-      model: 'gpt-4o-mini',
-      response_format: { type: 'json_object' }
-    });
-
-    const aiResponse = JSON.parse(completion.choices[0].message.content);
+    const aiResponse = await generateColdEmail(lead, senderName, senderRole);
 
     const { data: log, error: logError } = await supabase.from('message_logs').insert([{
       lead_id: lead.id,
@@ -207,30 +195,149 @@ app.post('/api/settings', (req, res) => {
   try {
     const { isRunning } = req.body;
     const settingsPath = path.resolve('settings.json');
-    fs.writeFileSync(settingsPath, JSON.stringify({ isRunning }, null, 2), 'utf8');
+    // Preserve all existing keys (like ai_system_rules), only toggle isRunning
+    const current = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : {};
+    const updated = { ...current, isRunning };
+    fs.writeFileSync(settingsPath, JSON.stringify(updated, null, 2), 'utf8');
     res.json({ success: true, isRunning });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+// ─── AI CHAT ENDPOINT ────────────────────────────────────────────────────────
+// Interprets user instructions and saves them as AI rules into settings.json
+app.post('/api/ai-chat', async (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: 'Message is required' });
+
+  try {
+    const settingsPath = path.resolve('settings.json');
+    const current = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : {};
+    const existingRules = current.ai_system_rules || '';
+
+    const systemPrompt = `You are an AI writing rules manager for a cold email outreach system. 
+The user will give you instructions about how they want future emails to be written.
+Your job is to convert their instruction into a clear, concise rule that will be appended to the email writer's system prompt.
+The rule should be specific, actionable, and written as an instruction (e.g. "Always end with a mention of the attached resume").
+Existing rules: ${existingRules || 'none'}
+Respond ONLY with valid JSON: {"rule": "...", "reply": "Got it — I'll [brief confirmation of what changes]"}` ;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: message }],
+      response_format: { type: 'json_object' }
+    });
+
+    const result = JSON.parse(completion.choices[0].message.content);
+    const newRules = existingRules ? `${existingRules}\n- ${result.rule}` : `- ${result.rule}`;
+    fs.writeFileSync(settingsPath, JSON.stringify({ ...current, ai_system_rules: newRules }, null, 2));
+
+    res.json({ reply: result.reply, rules: newRules });
+  } catch (err) {
+    console.error('[AI-CHAT]', err.message);
+    res.status(500).json({ error: 'Failed to process instruction: ' + err.message });
+  }
+});
+
+// Get current AI rules
+app.get('/api/ai-chat/rules', (req, res) => {
+  try {
+    const settingsPath = path.resolve('settings.json');
+    const current = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : {};
+    res.json({ rules: current.ai_system_rules || '' });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Clear all AI rules
+app.delete('/api/ai-chat/rules', (req, res) => {
+  try {
+    const settingsPath = path.resolve('settings.json');
+    const current = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : {};
+    fs.writeFileSync(settingsPath, JSON.stringify({ ...current, ai_system_rules: '' }, null, 2));
+    res.json({ success: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── MAGIC ENRICH ENDPOINT ───────────────────────────────────────────────────
+// Fetches a URL and uses GPT to extract company context for cold email personalization
+app.post('/api/enrich', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+
+  try {
+    // Fetch the URL with a browser-like user agent
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
+
+    const html = await response.text();
+
+    // Strip all HTML tags, scripts, styles to get readable text
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 3000); // First 3000 chars is enough context
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{
+        role: 'user',
+        content: `Based on this website text, write a 2-sentence summary of what this company does. Focus on: their product/service, target market, and company stage/size if visible. Be specific and factual — no fluff.\n\nWebsite text:\n${text}`
+      }],
+      max_tokens: 120
+    });
+
+    const summary = completion.choices[0].message.content.trim();
+    res.json({ summary });
+  } catch (err) {
+    console.error('[ENRICH]', err.message);
+    res.status(500).json({ error: 'Could not fetch or summarize URL: ' + err.message });
+  }
+});
+
 // ─── DASHBOARD API ───────────────────────────────────────────────────────────
 
 app.get('/api/stats', async (req, res) => {
-  const [
-    { count: totalLeads },
-    { count: sent },
-    { count: replied },
-    { count: bounced },
-    { count: pending }
-  ] = await Promise.all([
-    supabase.from('leads').select('*', { count: 'exact', head: true }),
-    supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Sent'),
-    supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Replied'),
-    supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Bounced'),
-    supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Pending'),
-  ]);
-  res.json({ totalLeads: totalLeads || 0, sent: sent || 0, replied: replied || 0, bounced: bounced || 0, pending: pending || 0 });
+  try {
+    const results = await Promise.all([
+      supabase.from('leads').select('*', { count: 'exact', head: true }),
+      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Sent'),
+      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Replied'),
+      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Bounced'),
+      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Pending'),
+    ]);
+
+    const errorResult = results.find(r => r.error);
+    if (errorResult) {
+      console.error("[Stats API] Supabase Error:", errorResult.error);
+      return res.status(500).json({ error: errorResult.error.message });
+    }
+
+    res.json({ 
+      totalLeads: results[0].count || 0, 
+      sent: results[1].count || 0, 
+      replied: results[2].count || 0, 
+      bounced: results[3].count || 0, 
+      pending: results[4].count || 0 
+    });
+  } catch (err) {
+    console.error("[Stats API] Unexpected Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Audit trail — last 50 message logs
@@ -255,24 +362,31 @@ const getSystemState = () => {
 
 // ─── CRON JOBS ───────────────────────────────────────────────────────────────
 
-// Every 10 minutes: pick the next Pending lead, generate AI email, send with resume
+// Every 10 minutes: outreach cycle (sends to new Pending leads)
 cron.schedule('*/10 * * * *', () => {
-  if (!getSystemState()) return console.log('⏸️ [CRON] Engine paused. Skipping outreach cycle.');
-  console.log('\n🕐 [10-min CRON] Triggering outreach cycle...');
+  if (!getSystemState()) return console.log('⏸️ [CRON] Engine paused.');
+  console.log('\n🕐 [10-min] Outreach cycle...');
   runOutreachCycle();
 });
 
-// Every 15 minutes: check inbox for replies, halt follow-ups on those leads
+// Every 15 minutes: check inbox for replies
 cron.schedule('*/15 * * * *', () => {
-  if (!getSystemState()) return; // Pause IMAP pulling if engine stopped
-  console.log('🔍 [15-min CRON] Checking for replies...');
+  if (!getSystemState()) return;
+  console.log('🔍 [15-min] Checking replies...');
   checkReplies();
 });
 
-// Once a day: Re-queue all bounced leads to pending so they can be rotated to another sender
+// Every hour: send follow-ups to leads stuck in Sent >24h with no reply
+cron.schedule('0 * * * *', () => {
+  if (!getSystemState()) return;
+  console.log('📬 [HOURLY] Follow-up cycle...');
+  runFollowUpCycle();
+});
+
+// Daily midnight: re-queue bounced leads
 cron.schedule('0 0 * * *', async () => {
-  console.log('♻️ [DAILY CRON] Re-queuing bounced leads...');
-  await supabase.from('leads').update({ status: 'Pending' }).eq('status', 'Bounced');
+  console.log('♻️ [DAILY] Re-queuing bounced leads...');
+  await supabase.from('leads').update({ status: 'Pending', follow_up_sent: false }).eq('status', 'Bounced');
 });
 
 const PORT = process.env.PORT || 5000;

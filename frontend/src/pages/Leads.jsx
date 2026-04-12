@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
-import { UserPlus, Plus, Trash2, Upload, X } from 'lucide-react'
+import { UserPlus, Plus, Trash2, Upload, X, Wand2, Loader2 } from 'lucide-react'
 import { API_BASE } from '../config'
 
 const API = API_BASE
-
-const emptyRow = () => ({ name: '', company: '', email: '', notes: '' })
+const emptyRow = () => ({ name: '', company: '', email: '', url: '', notes: '' })
 
 export default function Leads() {
   const [leads, setLeads] = useState([]);
@@ -13,6 +12,7 @@ export default function Leads() {
   const [showForm, setShowForm] = useState(false);
   const [rows, setRows] = useState(Array.from({ length: 5 }, emptyRow));
   const [submitting, setSubmitting] = useState(false);
+  const [enrichingIndex, setEnrichingIndex] = useState(null);
   const [error, setError] = useState('');
   const [successCount, setSuccessCount] = useState(null);
 
@@ -20,9 +20,7 @@ export default function Leads() {
     try {
       const res = await axios.get(`${API}/leads`);
       setLeads(res.data);
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
     setLoading(false);
   }
 
@@ -32,6 +30,20 @@ export default function Leads() {
     setRows(prev => prev.map((row, i) => i === index ? { ...row, [field]: value } : row));
     setError('');
     setSuccessCount(null);
+  };
+
+  const handleEnrich = async (index) => {
+    const url = rows[index].url?.trim();
+    if (!url) { setError(`Row ${index + 1}: paste a company website URL first.`); return; }
+    setEnrichingIndex(index);
+    setError('');
+    try {
+      const res = await axios.post(`${API}/enrich`, { url });
+      handleChange(index, 'notes', res.data.summary);
+    } catch (err) {
+      setError(`Row ${index + 1}: ${err.response?.data?.error || 'Could not fetch URL. Try a different one.'}`);
+    }
+    setEnrichingIndex(null);
   };
 
   const addRow = () => setRows(prev => [...prev, emptyRow()]);
@@ -50,43 +62,31 @@ export default function Leads() {
     setError('');
     setSuccessCount(null);
 
+    const payload = valid.map(r => ({
+      name:    r.name.trim(),
+      company: r.company.trim(),
+      email:   r.email.trim(),
+      notes:   r.notes.trim(),
+      status:  'Pending',
+    }));
+
     try {
-      const payload = valid.map(r => ({
-        name:    r.name.trim(),
-        company: r.company.trim(),
-        email:   r.email.trim(),
-        notes:   r.notes.trim(),
-        status:  'Pending',
-      }));
-
-      // Use bulk insert endpoint if exists, fallback to sequential
       await axios.post(`${API}/leads/bulk`, payload);
-
       setSuccessCount(payload.length);
       setRows(Array.from({ length: 5 }, emptyRow));
       await fetchLeads();
     } catch (err) {
-      // Fallback: insert one-by-one if /bulk doesn't exist
       if (err.response?.status === 404) {
         try {
-          const payload = valid.map(r => ({
-            name:    r.name.trim(),
-            company: r.company.trim(),
-            email:   r.email.trim(),
-            notes:   r.notes.trim(),
-            status:  'Pending',
-          }));
           await Promise.all(payload.map(lead => axios.post(`${API}/leads`, lead)));
           setSuccessCount(payload.length);
           setRows(Array.from({ length: 5 }, emptyRow));
           await fetchLeads();
         } catch (e2) {
-          setError(e2.response?.data?.error || 'Failed to add leads. Check console.');
-          console.error(e2);
+          setError(e2.response?.data?.error || 'Failed to add leads.');
         }
       } else {
-        setError(err.response?.data?.error || 'Failed to add leads. Check console.');
-        console.error(err);
+        setError(err.response?.data?.error || 'Failed to add leads.');
       }
     }
     setSubmitting(false);
@@ -109,15 +109,17 @@ export default function Leads() {
       {/* Bulk Entry Form */}
       {showForm && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8">
-          <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-lg font-bold text-slate-800">Bulk Lead Entry</h2>
-              <p className="text-sm text-slate-500 mt-0.5">Fill in as many rows as you need. Rows without an email will be skipped.</p>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Paste a company website URL and click <span className="inline-flex items-center gap-0.5 text-violet-600 font-medium"><Wand2 className="w-3 h-3" /> Enrich</span> to auto-fill notes from the site. Rows without an email are skipped.
+              </p>
             </div>
             <button
               type="button"
               onClick={addRow}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border border-slate-300 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors flex-shrink-0"
             >
               <Plus className="w-4 h-4" /> Add Row
             </button>
@@ -125,44 +127,55 @@ export default function Leads() {
 
           <form onSubmit={handleSubmit}>
             {/* Column headers */}
-            <div className="grid grid-cols-[1fr_1fr_1.2fr_1.6fr_auto] gap-2 mb-2 px-1">
-              {['Name', 'Company', 'Email *', 'Overview / Notes', ''].map(h => (
-                <span key={h} className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</span>
+            <div className="grid gap-2 mb-2 px-1" style={{ gridTemplateColumns: '1fr 1fr 1.1fr 1.1fr 1.6fr auto auto' }}>
+              {['Name', 'Company', 'Email *', 'Website URL', 'Overview / Notes (auto)', '', ''].map((h, i) => (
+                <span key={i} className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</span>
               ))}
             </div>
 
             {/* Rows */}
             <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
               {rows.map((row, i) => (
-                <div key={i} className="grid grid-cols-[1fr_1fr_1.2fr_1.6fr_auto] gap-2 items-center">
+                <div key={i} className="grid gap-2 items-center" style={{ gridTemplateColumns: '1fr 1fr 1.1fr 1.1fr 1.6fr auto auto' }}>
                   <input
-                    type="text"
-                    placeholder="John Doe"
-                    value={row.name}
+                    type="text" placeholder="John Doe" value={row.name}
                     onChange={e => handleChange(i, 'name', e.target.value)}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                   />
                   <input
-                    type="text"
-                    placeholder="Acme Corp"
-                    value={row.company}
+                    type="text" placeholder="Acme Corp" value={row.company}
                     onChange={e => handleChange(i, 'company', e.target.value)}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                   />
                   <input
-                    type="email"
-                    placeholder="john@acme.com"
-                    value={row.email}
+                    type="email" placeholder="john@acme.com" value={row.email}
                     onChange={e => handleChange(i, 'email', e.target.value)}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                   />
                   <input
-                    type="text"
-                    placeholder="Paste overview, role, context…"
-                    value={row.notes}
-                    onChange={e => handleChange(i, 'notes', e.target.value)}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    type="url" placeholder="https://acme.com" value={row.url}
+                    onChange={e => handleChange(i, 'url', e.target.value)}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
                   />
+                  <input
+                    type="text" placeholder="Auto-filled after Enrich, or paste manually…" value={row.notes}
+                    onChange={e => handleChange(i, 'notes', e.target.value)}
+                    className={`px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 ${row.notes ? 'border-emerald-300 bg-emerald-50' : 'border-slate-300'}`}
+                  />
+                  {/* Enrich button */}
+                  <button
+                    type="button"
+                    onClick={() => handleEnrich(i)}
+                    disabled={enrichingIndex === i || !row.url?.trim()}
+                    title="Auto-fill notes from website URL"
+                    className="flex items-center gap-1 px-2 py-2 bg-violet-100 text-violet-700 rounded-lg hover:bg-violet-200 transition-colors disabled:opacity-40 text-xs font-medium whitespace-nowrap"
+                  >
+                    {enrichingIndex === i
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <Wand2 className="w-3.5 h-3.5" />}
+                    {enrichingIndex === i ? '' : 'Enrich'}
+                  </button>
+                  {/* Delete row */}
                   <button
                     type="button"
                     onClick={() => removeRow(i)}
@@ -177,10 +190,10 @@ export default function Leads() {
 
             {/* Footer */}
             <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
-              <div className="flex items-center gap-4">
+              <div>
                 {error && <p className="text-red-500 text-sm">{error}</p>}
                 {successCount !== null && (
-                  <p className="text-emerald-600 text-sm font-medium">✓ {successCount} lead{successCount !== 1 ? 's' : ''} added successfully!</p>
+                  <p className="text-emerald-600 text-sm font-medium">✓ {successCount} lead{successCount !== 1 ? 's' : ''} added!</p>
                 )}
               </div>
               <button
@@ -200,9 +213,8 @@ export default function Leads() {
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-4 border-b border-slate-200 flex justify-between bg-zinc-50/50">
           <input
-            type="text"
-            placeholder="Search leads..."
-            className="px-4 py-2 border border-slate-300 rounded-lg w-64 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 border-opacity-50"
+            type="text" placeholder="Search leads..."
+            className="px-4 py-2 border border-slate-300 rounded-lg w-64 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
           <span className="text-sm text-slate-500 self-center">{leads.length} total</span>
         </div>
@@ -227,9 +239,10 @@ export default function Leads() {
                 <td className="p-4 text-slate-500 max-w-xs truncate" title={lead.notes}>{lead.notes || '—'}</td>
                 <td className="p-4">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    lead.status === 'Sent'    ? 'bg-blue-100 text-blue-800'   :
-                    lead.status === 'Replied' ? 'bg-green-100 text-green-800' :
-                    lead.status === 'Bounced' ? 'bg-red-100 text-red-800'     :
+                    lead.status === 'Sent'       ? 'bg-blue-100 text-blue-800'   :
+                    lead.status === 'Replied'    ? 'bg-green-100 text-green-800' :
+                    lead.status === 'Bounced'    ? 'bg-red-100 text-red-800'     :
+                    lead.status === 'Follow-up'  ? 'bg-purple-100 text-purple-800' :
                     'bg-yellow-100 text-yellow-800'
                   }`}>
                     {lead.status}

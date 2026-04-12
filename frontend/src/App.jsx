@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import Leads from './pages/Leads'
 import Campaigns from './pages/Campaigns'
 import Senders from './pages/Senders'
+import AiAgent from './components/AiAgent'
 
 function Sidebar() {
   const location = useLocation()
@@ -69,6 +70,7 @@ export default function App() {
             </Routes>
           </div>
         </main>
+        <AiAgent />
       </div>
     </BrowserRouter>
   )

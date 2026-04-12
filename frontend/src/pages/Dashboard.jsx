@@ -5,12 +5,20 @@ import { API_BASE } from '../config'
 export default function Dashboard() {
   const [stats, setStats] = useState({ totalLeads: 0, sent: 0, replied: 0, bounced: 0 });
   const [isRunning, setIsRunning] = useState(false);
+  const [fetchError, setFetchError] = useState('');
 
   useEffect(() => {
     // Fetch stats
     axios.get(`${API_BASE}/stats`)
-      .then(res => setStats(res.data))
-      .catch(err => console.error("Error fetching stats:", err));
+      .then(res => {
+        setStats(res.data);
+        setFetchError('');
+      })
+      .catch(err => {
+        const msg = err.response?.data?.error || err.message;
+        console.error("Error fetching stats:", err);
+        setFetchError(`Failed to load stats: ${msg}`);
+      });
 
     // Fetch engine state
     axios.get(`${API_BASE}/settings`)
@@ -51,6 +59,13 @@ export default function Dashboard() {
           )}
         </button>
       </div>
+
+      {fetchError && (
+        <div className="mb-8 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded shadow-sm flex flex-col gap-2">
+          <div className="font-bold">⚠️ Connection Error</div>
+          <div className="text-sm">{fetchError}</div>
+        </div>
+      )}
       
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
