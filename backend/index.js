@@ -10,6 +10,7 @@ import { OpenAI } from 'openai';
 import cron from 'node-cron';
 import { runOutreachCycle, runFollowUpCycle, generateColdEmail } from './services/emailService.js';
 import { checkReplies } from './services/imapService.js';
+import { scrapeLinkedInProfile } from './services/linkedinService.js';
 
 dotenv.config();
 
@@ -306,6 +307,67 @@ app.post('/api/enrich', async (req, res) => {
   } catch (err) {
     console.error('[ENRICH]', err.message);
     res.status(500).json({ error: 'Could not fetch or summarize URL: ' + err.message });
+  }
+});
+
+// ─── LINKEDIN → EMAIL ENDPOINT (FREE — no paid APIs) ────────────────────────
+// Accepts a LinkedIn profile URL, scrapes the public page, and generates a
+// personalised cold email using the extracted profile data.
+app.post('/api/linkedin-email', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'LinkedIn URL is required' });
+
+  try {
+    // 1️⃣ Scrape the LinkedIn profile (free — meta tags only)
+    console.log(`🔗 [LINKEDIN] Scraping: ${url}`);
+    const profile = await scrapeLinkedInProfile(url);
+    console.log(`✅ [LINKEDIN] Found: ${profile.name} — ${profile.headline}`);
+
+    // 2️⃣ Convert the scraped profile into a "lead" object for email generation
+    const pseudoLead = {
+      name:    profile.name || '',
+      company: profile.company || '',
+      email:   '',  // not needed for generation
+      notes:   [
+        profile.headline && `Role: ${profile.headline}`,
+        profile.company && `Company: ${profile.company}`,
+        profile.location && `Location: ${profile.location}`,
+        profile.summary && `About: ${profile.summary}`,
+      ].filter(Boolean).join('. '),
+    };
+
+    // 3️⃣ Generate a cold email using existing AI engine
+    const senderName = process.env.SENDER_NAME || 'Job Seeker';
+    const senderRole = process.env.SENDER_ROLE || 'Software Developer';
+    const email = await generateColdEmail(pseudoLead, senderName, senderRole);
+
+    res.json({ profile, email });
+  } catch (err) {
+    console.error('[LINKEDIN]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── LINKEDIN → ADD AS LEAD ENDPOINT ────────────────────────────────────────
+// Quick-add a LinkedIn scraped profile directly into the leads table
+app.post('/api/linkedin-lead', async (req, res) => {
+  const { name, company, email, linkedin_url, notes } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email is required to add as a lead' });
+
+  try {
+    const { data, error } = await supabase.from('leads').insert([{
+      name: name || '',
+      company: company || '',
+      email,
+      linkedin_url: linkedin_url || '',
+      notes: notes || '',
+      status: 'Pending',
+    }]).select();
+
+    if (error) throw new Error(error.message);
+    res.json(data[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

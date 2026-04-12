@@ -166,12 +166,26 @@ export const runOutreachCycle = async () => {
     console.log('✓ No active senders. Skipping.'); return;
   }
 
-  const { data: leads, error: leadsErr } = await supabase
-    .from('leads').select('*').eq('status', 'Pending')
+  // Query pending leads we *want* to process
+  const { data: pendingLeads, error: pendingErr } = await supabase
+    .from('leads').select('id').eq('status', 'Pending')
     .order('created_at', { ascending: true }).limit(senders.length);
 
-  if (leadsErr || !leads?.length) {
+  if (pendingErr || !pendingLeads?.length) {
     console.log('✓ No pending leads.'); return;
+  }
+
+  // Atomically claim these leads so other instances/crons running simultaneously skip them
+  const leadIds = pendingLeads.map(l => l.id);
+  const { data: leads, error: leadsErr } = await supabase
+    .from('leads')
+    .update({ status: 'Processing' })
+    .in('id', leadIds)
+    .eq('status', 'Pending')
+    .select('*');
+
+  if (leadsErr || !leads?.length) {
+    console.log('✓ Pending leads were already claimed by another process.'); return;
   }
 
   console.log(`🚀 Sending ${leads.length} emails across ${senders.length} senders...`);
@@ -233,17 +247,30 @@ export const runFollowUpCycle = async () => {
 
   if (sendersErr || !senders?.length) return;
 
-  // Leads that were sent >24h ago, not replied, no follow-up yet
+  // Query leads that were sent >24h ago, not replied, no follow-up yet
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: leads, error: leadsErr } = await supabase
-    .from('leads').select('*')
+  const { data: pendingFollowUps, error: pendingErr } = await supabase
+    .from('leads').select('id')
     .eq('status', 'Sent')
     .eq('follow_up_sent', false)
     .lt('last_contacted_at', cutoff)
     .limit(senders.length);
 
-  if (leadsErr || !leads?.length) {
+  if (pendingErr || !pendingFollowUps?.length) {
     console.log('✓ No follow-ups due.'); return;
+  }
+
+  // Atomically claim these follow-ups
+  const leadIds = pendingFollowUps.map(l => l.id);
+  const { data: leads, error: leadsErr } = await supabase
+    .from('leads')
+    .update({ status: 'Processing Follow-up' })
+    .in('id', leadIds)
+    .eq('follow_up_sent', false)
+    .select('*');
+
+  if (leadsErr || !leads?.length) {
+    console.log('✓ Follow-ups were already claimed by another process.'); return;
   }
 
   console.log(`📨 Sending ${leads.length} follow-ups...`);
@@ -284,11 +311,12 @@ export const runFollowUpCycle = async () => {
         sent_at: new Date().toISOString(),
       }).eq('id', logData.id);
 
-      await supabase.from('leads').update({ follow_up_sent: true }).eq('id', lead.id);
+      await supabase.from('leads').update({ status: 'Follow-up', follow_up_sent: true }).eq('id', lead.id);
 
       console.log(`✅ Follow-up sent to ${lead.email}`);
     } catch (err) {
       console.error(`❌ Follow-up failed for ${lead.email}: ${err.message}`);
+      await supabase.from('leads').update({ status: 'Sent' }).eq('id', lead.id);
     }
   }));
 };
